@@ -1,0 +1,12 @@
+.env
+/data/
+*.db
+*.db-shm
+*.db-wal
+/bin/
+/bin-*/
+dist/
+coverage.out
+.claude/settings.local.json
+.preview/
+.shot.png

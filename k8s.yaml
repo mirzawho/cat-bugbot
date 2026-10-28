@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bugbot
+---
+# توکن و رمز پنل را به‌صورت خارج از YAML بسازید:
+#   kubectl -n bugbot create secret generic bugbot-secret \
+#     --from-literal=BOT_TOKEN='...' --from-literal=ADMIN_PANEL_PASSWORD='...' \
+#     --from-literal=ADMINS='123456789,987654321'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bugbot-data
+  namespace: bugbot
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bugbot
+  namespace: bugbot
+  labels:
+    app: bugbot
+spec:
+  # SQLite روی یک Volume: چند Replica مجاز نیست
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bugbot
+  template:
+    metadata:
+      labels:
+        app: bugbot
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bugbot
+          image: ghcr.io/mirzawho/bugbot:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bugbot-secret
+                  key: BOT_TOKEN
+            - name: ADMIN_PANEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bugbot-secret
+                  key: ADMIN_PANEL_PASSWORD
+                  optional: true
+            - name: ADMINS
+              valueFrom:
+                secretKeyRef:
+                  name: bugbot-secret
+                  key: ADMINS
+                  optional: true
+            - name: SERVICE_URL
+              value: https://cr0.ir
+            - name: DATABASE_PATH
+              value: /data/bugbot.db
+            - name: HEALTH_ADDR
+              value: ":8080"
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bugbot-data
+---
+# پنل مدیریت روی /admin/ سرو می‌شود؛ ربات هنوز Polling است و به وب‌هوک نیاز ندارد.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bugbot
+  namespace: bugbot
+spec:
+  selector:
+    app: bugbot
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# دامنه cr0.ir فقط برای پنل مدیریت لازم است.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bugbot
+  namespace: bugbot
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+spec:
+  rules:
+    - host: cr0.ir
+      http:
+        paths:
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: bugbot
+                port:
+                  number: 80
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: bugbot
+                port:
+                  number: 80

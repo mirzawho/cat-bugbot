@@ -1,0 +1,133 @@
+/* Small additions on top of the Tailwind CDN build. */
+.tab.active {
+  background: #6366f1;
+  color: #fff;
+  box-shadow: 0 6px 16px -8px rgba(99, 102, 241, 0.9);
+}
+.tab:hover:not(.active) {
+  background: rgba(148, 163, 184, 0.1);
+}
+.card {
+  animation: card-in 0.22s ease-out both;
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.media img,
+.media video {
+  width: 100%;
+  max-height: 360px;
+  display: block;
+  background: #020617;
+}
+.media img { object-fit: cover; }
+.media .placeholder {
+  display: flex;
+  height: 120px;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+.description:empty::before {
+  content: "بدون توضیحات";
+  color: #64748b;
+}
+.bubble {
+  max-width: 85%;
+  border-radius: 0.9rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-line;
+  word-break: break-word;
+}
+/* Full-width action buttons inside a card. */
+.btn-full {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+
+.bubble.user {
+  margin-inline-end: auto;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+.bubble.admin {
+  margin-inline-start: auto;
+  background: #4f46e5;
+  color: #fff;
+}
+.bubble time {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.62rem;
+  opacity: 0.65;
+}
+.status-new { background: rgba(56, 189, 248, 0.15); color: #7dd3fc; }
+.status-review { background: rgba(234, 179, 8, 0.15); color: #fde68a; }
+.status-resolved { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
+.status-rejected { background: rgba(244, 63, 94, 0.15); color: #fda4af; }
+
+/* Telegram Mini App tweaks (body gets this class from the bootstrap). */
+body.miniapp header { position: static; }
+body.miniapp main { padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
+
+/* Bottom sheet (chat with the reporter). */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.7);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.sheet-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 86vh;
+  height: 70vh;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 1.25rem 1.25rem 0 0;
+  transform: translateY(100%);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.sheet-handle {
+  width: 44px;
+  height: 5px;
+  margin: 8px auto 0;
+  border-radius: 999px;
+  background: #334155;
+}
+.sheet.open { visibility: visible; }
+.sheet.open .sheet-backdrop { opacity: 1; }
+.sheet.open .sheet-panel { transform: translateY(0); }
+.sheet.hidden { display: none; }
+body.sheet-open { overflow: hidden; }
+@media (min-width: 768px) {
+  .sheet { align-items: center; }
+  .sheet-panel {
+    height: auto;
+    max-height: 75vh;
+    max-width: 32rem;
+    border-radius: 1.25rem;
+    transform: translateY(12px) scale(0.98);
+    opacity: 0;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+  .sheet.open .sheet-panel { transform: none; opacity: 1; }
+  .sheet-handle { display: none; }
+}

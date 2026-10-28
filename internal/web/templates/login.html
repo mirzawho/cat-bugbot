@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ورود به پنل مدیریت کت</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { sans: ['Vazirmatn', 'Tahoma', 'sans-serif'] } } } };
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700&display=swap" rel="stylesheet" />
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 font-sans flex items-center justify-center p-4">
+  <form method="post" action="/admin/login" class="w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-800 p-8 shadow-2xl">
+    <div class="mb-6 text-center">
+      <div class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/20 text-3xl">🐞</div>
+      <h1 class="text-xl font-bold">پنل مدیریت کت</h1>
+      <p class="mt-1 text-sm text-slate-400">فقط مدیران می‌توانند وارد شوند</p>
+    </div>
+    <label for="token" class="mb-1 block text-sm text-slate-300">توکن مدیر</label>
+    <input id="token" name="token" type="password" autocomplete="current-password" required
+      class="mb-4 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-left outline-none focus:border-indigo-500" dir="ltr" />
+    {{if .Error}}
+    <p class="mb-4 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{{.Error}}</p>
+    {{end}}
+    <button type="submit" class="w-full rounded-xl bg-indigo-600 py-3 font-semibold hover:bg-indigo-500">ورود</button>
+  </form>
+</body>
+</html>

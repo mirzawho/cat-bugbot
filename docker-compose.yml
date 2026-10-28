@@ -1,0 +1,28 @@
+services:
+  bugbot:
+    build: .
+    image: bugbot:local
+    container_name: bugbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/bugbot.db
+      HEALTH_ADDR: ":8080"
+    volumes:
+      - bugbot-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bugbot", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    stop_grace_period: 15s
+
+volumes:
+  bugbot-data:

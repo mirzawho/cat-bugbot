@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>باگ‌های کت</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { sans: ['Vazirmatn', 'Tahoma', 'sans-serif'] } } } };
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/admin/static/app.css" />
+  <script src="/telegram-web-app.js"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 font-sans">
+  <div id="miniapp-gate" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950">
+    <div class="rounded-2xl border border-slate-800 bg-slate-900 px-6 py-5 text-center text-sm text-slate-300">
+      <div class="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-indigo-500"></div>
+      <p id="miniapp-gate-text">در حال بررسی دسترسی…</p>
+    </div>
+  </div>
+  <header class="sticky top-0 z-20 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
+    <div class="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
+      <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20 text-xl">🐞</div>
+      <div class="flex-1">
+        <h1 class="text-lg font-bold leading-tight">باگ‌های کت</h1>
+        <p class="text-xs text-slate-400">{{.AdminName}}</p>
+      </div>
+      <button id="refresh" class="rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800" title="به‌روزرسانی">⟳</button>
+      <form method="post" action="/admin/logout">
+        <button class="rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800">خروج</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-5xl px-4 pb-24 pt-4">
+    <nav id="tabs" class="mb-4 flex gap-1 overflow-x-auto rounded-2xl bg-slate-900 p-1 border border-slate-800">
+      <button data-tab="all" class="tab flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium">همه <span data-count="all" class="text-xs opacity-70"></span></button>
+      <button data-tab="review" class="tab flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium">در حال بررسی <span data-count="review" class="text-xs opacity-70"></span></button>
+      <button data-tab="resolved" class="tab flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium">حل شده‌ها <span data-count="resolved" class="text-xs opacity-70"></span></button>
+      <button data-tab="rejected" class="tab flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium">حذف شده‌ها <span data-count="rejected" class="text-xs opacity-70"></span></button>
+    </nav>
+
+    <div id="error" class="hidden mb-4 rounded-xl bg-rose-500/10 px-4 py-3 text-sm text-rose-300"></div>
+    <div id="list" class="grid gap-4 md:grid-cols-2"></div>
+    <div id="empty" class="hidden rounded-2xl border border-dashed border-slate-800 py-16 text-center text-slate-400">
+      گزارشی در این بخش نیست.
+    </div>
+    <div id="loading" class="grid gap-4 md:grid-cols-2">
+      <div class="h-64 animate-pulse rounded-2xl bg-slate-900"></div>
+      <div class="h-64 animate-pulse rounded-2xl bg-slate-900"></div>
+    </div>
+  </main>
+
+  <template id="card">
+    <article class="card overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-lg">
+      <div class="media grid gap-1 bg-slate-950"></div>
+      <div class="p-4">
+        <div class="mb-3 flex items-start justify-between gap-2">
+          <a class="category rounded-lg bg-indigo-500/15 px-2 py-1 text-sm font-semibold text-indigo-300" href="#"></a>
+          <span class="status rounded-lg px-2 py-1 text-xs font-medium"></span>
+        </div>
+        <div class="mb-3 flex items-center gap-2 text-sm">
+          <img class="avatar h-9 w-9 shrink-0 rounded-full bg-slate-800 object-cover" alt="" />
+          <div class="min-w-0">
+            <p class="name truncate font-medium"></p>
+            <p class="handle truncate text-xs text-slate-400" dir="ltr"></p>
+          </div>
+          <time class="date mr-auto text-xs text-slate-500" dir="rtl"></time>
+        </div>
+        <p class="description whitespace-pre-line break-words text-sm leading-6 text-slate-300"></p>
+        <div class="actions mt-4 grid gap-2"></div>
+      </div>
+    </article>
+  </template>
+
+  <script>
+    // Inside a Telegram Mini App there is no panel session yet: exchange the
+    // signed initData for one. Outside Telegram the gate is skipped.
+    (async () => {
+      const gate = document.getElementById("miniapp-gate");
+      const tg = window.Telegram && window.Telegram.WebApp;
+      const initData = (tg && tg.initData) || "";
+      if (!initData) { gate.remove(); return; }
+      tg.ready(); tg.expand(); tg.disableVerticalSwipes && tg.disableVerticalSwipes();
+      document.body.classList.add("miniapp");
+      try {
+        const res = await fetch("/admin/miniapp/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ initData }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          document.getElementById("miniapp-gate-text").textContent = body.error || "دسترسی ندارید";
+          return;
+        }
+        location.reload();
+      } catch {
+        document.getElementById("miniapp-gate-text").textContent = "اتصال به سرور برقرار نشد";
+      }
+    })();
+  </script>
+  <!-- Chat sheet: slides up from the bottom on phones, centred dialog on desktop. -->
+  <div id="chat-sheet" class="sheet hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet-backdrop" data-close-sheet></div>
+    <div class="sheet-panel">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <header class="flex items-center gap-3 border-b border-slate-800 px-4 py-3">
+        <div id="sheet-header" class="flex min-w-0 flex-1 items-center gap-3"></div>
+        <button type="button" class="rounded-xl border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800" data-close-sheet aria-label="بستن">بستن</button>
+      </header>
+      <h2 id="sheet-title" class="sr-only">گفت‌وگو با گزارش‌دهنده</h2>
+      <div id="sheet-messages" class="messages flex-1 space-y-2 overflow-y-auto px-4 py-3"></div>
+      <form id="sheet-form" class="flex gap-2 border-t border-slate-800 px-4 py-3">
+        <input class="flex-1 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm outline-none focus:border-indigo-500" placeholder="پاسخ به گزارش‌دهنده در تلگرام…" maxlength="2000" autocomplete="off" />
+        <button class="send rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold hover:bg-indigo-500 disabled:opacity-50" type="submit">ارسال</button>
+      </form>
+    </div>
+  </div>
+  <script src="/admin/static/app.js"></script>
+</body>
+</html>
