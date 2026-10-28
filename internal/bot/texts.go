@@ -81,8 +81,6 @@ const (
 آدرس فعلی: %s
 SERVICE_URL را روی دامنه HTTPS (مثلاً https://cr0.ir) بگذارید و ربات را دوباره اجرا کنید.`
 
-	textNoPanel = `این بخش فقط برای مدیران کت است.`
-
 	// Admin flow.
 	textReportResolved = `گزارش تو («%s») پذیرفته و حل شد. 🎉
 ممنون از همراهی‌ات.`

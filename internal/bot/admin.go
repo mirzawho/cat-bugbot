@@ -146,9 +146,11 @@ func (h *Handler) SetPanelURL(u string) {
 }
 
 // panel opens the admin panel as a Telegram Mini App (inside Telegram, no browser).
+// Non-admins get no answer at all: the panel must not even look like it exists
+// for them, so guessing the command only produces silence.
 func (h *Handler) panel(ctx context.Context, m telegram.Message) error {
 	if !h.isPanelUser(m.From.ID) {
-		return h.sendHint(ctx, m.Chat.ID, textNoPanel, nil)
+		return nil
 	}
 	if !strings.HasPrefix(h.panelURL, "https://") {
 		// Telegram only opens Mini Apps served over HTTPS.

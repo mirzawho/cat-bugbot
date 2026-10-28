@@ -548,12 +548,8 @@ func TestPanelCommandOnlyForAdmins(t *testing.T) {
 	e := newEnv(t)
 	e.h.SetPanelURL("https://cr0.ir")
 	e.text("/panel")
-	m := e.last()
-	if !strings.HasPrefix(m.Text, "✋") && !strings.Contains(m.Text, "فقط برای مدیران") {
-		t.Fatalf("non-admin should be refused, got %q", m.Text)
-	}
-	if m.KB != nil {
-		t.Fatal("non-admin must not receive a panel button")
+	if got := e.api.sentTexts(); len(got) != 0 {
+		t.Fatalf("non-admin must get no answer, got %q", got)
 	}
 
 	admin := bot.New(e.api, e.db, func(id int64) bool { return id == testUserID })
@@ -567,7 +563,7 @@ func TestPanelCommandOnlyForAdmins(t *testing.T) {
 			Text:      "/panel",
 		},
 	})
-	m = e.last()
+	m := e.last()
 	if m.KB == nil || len(m.KB.InlineKeyboard[0]) != 1 || m.KB.InlineKeyboard[0][0].WebApp == nil {
 		t.Fatalf("admin should receive a Mini App button, got %+v", m.KB)
 	}

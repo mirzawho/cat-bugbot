@@ -52,19 +52,25 @@ func loadDotEnv(path string) {
 }
 
 // registerCommands fills the bot's command menu (the "☰" list in chats).
-func registerCommands(ctx context.Context, api *telegram.Client) {
-	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+// /panel is only published in each admin's own chat: everybody else never sees
+// the command, and sending it by hand gets no reply.
+func registerCommands(ctx context.Context, api *telegram.Client, admins []int64) {
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	// /panel is registered alongside the public commands; only ADMINS get a
-	// working button (the panel verifies every Mini App launch by signature).
-	commands := []telegram.BotCommand{
+	public := []telegram.BotCommand{
 		{Command: "report", Description: "ثبت گزارش باگ"},
-		{Command: "panel", Description: "پنل مدیریت"},
 		{Command: "cancel", Description: "لغو یا پایان گفت‌وگو"},
 	}
-	if err := api.SetMyCommands(rctx, map[string]any{"commands": commands}); err != nil {
+	if err := api.SetMyCommands(rctx, map[string]any{"commands": public}); err != nil {
 		log.Printf("register commands: %v", err)
 		return
+	}
+	admin := append(append([]telegram.BotCommand{}, public...), telegram.BotCommand{Command: "panel", Description: "پنل مدیریت"})
+	for _, id := range admins {
+		scope := map[string]any{"type": "chat", "chat_id": id}
+		if err := api.SetMyCommands(rctx, map[string]any{"commands": admin, "scope": scope}); err != nil {
+			log.Printf("register admin commands for %d: %v", id, err)
+		}
 	}
 }
 
@@ -180,7 +186,7 @@ func main() {
 		}
 	}()
 
-	go registerCommands(ctx, api)
+	go registerCommands(ctx, api, cfg.Admins)
 
 	pollErr := make(chan error, 1)
 	go func() { pollErr <- poller.Run(ctx) }()
