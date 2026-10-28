@@ -17,6 +17,8 @@ type Handler struct {
 	api       telegram.API
 	db        *store.Store
 	isAdminFn func(userID int64) bool
+	// adminIDs are told about every new report (empty disables the notice).
+	adminIDs []int64
 	// panelURL is the Mini App address shown to admins (empty disables the button).
 	panelURL string
 	// reportChatID is where stored media is re-sent so this bot owns fresh file IDs.
@@ -33,12 +35,16 @@ func New(api telegram.API, db *store.Store, isAdmin ...func(int64) bool) *Handle
 	return h
 }
 
+// SetAdmins lists the users that get a notice for every submitted report.
+func (h *Handler) SetAdmins(ids []int64) { h.adminIDs = ids }
+
 const (
 	cbCancel    = "cancel"
 	cbResume    = "resume"
 	cbRestart   = "restart"
 	cbMediaYes  = "media:yes"
 	cbMediaNo   = "media:no"
+	cbSkipMedia = "media:skip"
 	cbCatPrefix = "cat:"
 	cbCatYes    = "cat:yes"
 	cbCatNo     = "cat:no"
@@ -49,6 +55,15 @@ const (
 
 func kbCancel() *telegram.InlineKeyboardMarkup {
 	return telegram.Rows(telegram.Button("لغو گزارش", cbCancel))
+}
+
+// kbCancelOrSkipMedia is the first step: media is optional, so the user can go
+// straight to the category.
+func kbCancelOrSkipMedia() *telegram.InlineKeyboardMarkup {
+	return telegram.Rows(
+		telegram.Button("بدون تصویر ادامه بده", cbSkipMedia),
+		telegram.Button("لغو گزارش", cbCancel),
+	)
 }
 
 func kbStartMenu() *telegram.InlineKeyboardMarkup {
@@ -128,7 +143,7 @@ func (h *Handler) HandleUpdate(ctx context.Context, u telegram.Update) {
 func promptFor(d domain.Draft) (string, *telegram.InlineKeyboardMarkup) {
 	switch d.State {
 	case domain.StateAwaitingMedia:
-		return textAskMedia, kbCancel()
+		return textAskMedia, kbCancelOrSkipMedia()
 	case domain.StateConfirmingMedia:
 		return textConfirmMedia, kbConfirmMedia()
 	case domain.StateSelectingCategory:
@@ -136,6 +151,11 @@ func promptFor(d domain.Draft) (string, *telegram.InlineKeyboardMarkup) {
 	case domain.StateConfirmingCategory:
 		return fmt.Sprintf(textConfirmCategory, d.Category), kbConfirmCategory()
 	case domain.StateAwaitingDescription:
+		if d.Desc != "" {
+			// Text sent at the media step already serves as the description; show it
+			// so the user knows it is kept and can replace it.
+			return fmt.Sprintf(textAskDescriptionUpdate, d.Desc), kbDescription()
+		}
 		return textAskDescription, kbDescription()
 	case domain.StateConfirmingSubmit:
 		return summary(d), kbConfirmSubmit()
@@ -153,9 +173,11 @@ func summary(d domain.Draft) string {
 
 func mediaLabel(media []domain.Media) string {
 	switch {
+	case len(media) == 0:
+		return textNoMedia
 	case len(media) > 1:
 		return fmt.Sprintf("%d فایل", len(media))
-	case len(media) == 1 && media[0].Type == domain.MediaVideo:
+	case media[0].Type == domain.MediaVideo:
 		return "ویدئوی ارسال‌شده"
 	}
 	return "تصویر ارسال‌شده"
@@ -303,7 +325,14 @@ func (h *Handler) handleMessage(ctx context.Context, m telegram.Message) error {
 	switch d.State {
 	case domain.StateAwaitingMedia:
 		if len(media) == 0 {
-			reply, kb = textBadMedia, kbCancel()
+			// Media is optional: a message without media moves the report on to the
+			// category. Text sent here is the natural place for the description, so
+			// keep it instead of throwing it away.
+			if text != "" {
+				d.Desc = text
+			}
+			d.State = domain.StateSelectingCategory
+			reply, kb = promptFor(d)
 			break
 		}
 		d.Media = media
@@ -443,7 +472,7 @@ func (h *Handler) start(ctx context.Context, m telegram.Message) error {
 	}
 
 	d = domain.Draft{User: userInfo(*m.From), State: domain.StateAwaitingMedia}
-	return h.replacePrompt(ctx, &d, int64(m.MessageID), textWelcome, kbCancel())
+	return h.replacePrompt(ctx, &d, int64(m.MessageID), textWelcome, kbCancelOrSkipMedia())
 }
 
 func (h *Handler) resume(ctx context.Context, d *domain.Draft) error {
@@ -486,7 +515,7 @@ func (h *Handler) handleCallback(ctx context.Context, cb telegram.CallbackQuery)
 			return err
 		}
 		d := domain.Draft{User: userInfo(cb.From), State: domain.StateAwaitingMedia, PromptMessageID: promptID}
-		return h.editPrompt(ctx, &d, textWelcome, kbCancel())
+		return h.editPrompt(ctx, &d, textWelcome, kbCancelOrSkipMedia())
 	}
 
 	d, has, err := h.loadDraft(ctx, cb.From.ID)
@@ -528,6 +557,10 @@ func (h *Handler) handleCallback(ctx context.Context, cb telegram.CallbackQuery)
 	case cb.Data == cbMediaNo:
 		d.Media = nil
 		d.State = domain.StateAwaitingMedia
+	case cb.Data == cbSkipMedia:
+		d.Media = nil
+		d.MediaMessageID = 0
+		d.State = domain.StateSelectingCategory
 	case cb.Data != cbCatYes && cb.Data != cbCatNo && strings.HasPrefix(cb.Data, cbCatPrefix):
 		cat, ok := domain.CategoryByKey(strings.TrimPrefix(cb.Data, cbCatPrefix))
 		if !ok {
@@ -542,7 +575,8 @@ func (h *Handler) handleCallback(ctx context.Context, cb telegram.CallbackQuery)
 	case cb.Data == cbCatYes:
 		d.State = domain.StateAwaitingDescription
 	case cb.Data == cbSkipDesc:
-		d.Desc = ""
+		// Keep any description already collected (a text sent at the media step);
+		// skipping only closes this step.
 		d.State = domain.StateConfirmingSubmit
 	case cb.Data == cbSubmitYes:
 		return h.submit(ctx, chatID, promptID, d)
@@ -565,6 +599,8 @@ func (h *Handler) editOrSend(ctx context.Context, chatID, messageID int64, text 
 
 func allowedCallbacks(s domain.State) map[string]bool {
 	switch s {
+	case domain.StateAwaitingMedia:
+		return map[string]bool{cbSkipMedia: true}
 	case domain.StateConfirmingMedia:
 		return map[string]bool{cbMediaYes: true, cbMediaNo: true}
 	case domain.StateSelectingCategory:
@@ -588,13 +624,14 @@ func (h *Handler) submit(ctx context.Context, chatID, promptID int64, d domain.D
 	if err != nil {
 		return err
 	}
-	err = h.db.InsertReport(ctx, domain.Report{
+	report := domain.Report{
 		ID:          id,
 		User:        d.User,
 		Media:       d.Media,
 		Category:    d.Category,
 		Description: strings.TrimSpace(d.Desc),
-	})
+	}
+	err = h.db.InsertReport(ctx, report)
 	if errors.Is(err, store.ErrNoDraftSentinel) {
 		return h.editOrSend(ctx, chatID, promptID, textNoDraft, kbNewReport(cbRestart))
 	}
@@ -604,6 +641,7 @@ func (h *Handler) submit(ctx context.Context, chatID, promptID int64, d domain.D
 	if err := h.editOrSend(ctx, chatID, promptID, textSuccess, kbNewReport(cbRestart)); err != nil {
 		return err
 	}
+	h.notifyAdmins(ctx, report)
 	if h.isPanelUser(d.User.ID) && h.panelURL != "" {
 		_, err := h.api.SendMessageWithReplyKeyboard(ctx, chatID, textAdminHint, adminMenu(h.panelURL))
 		return err

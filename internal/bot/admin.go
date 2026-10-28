@@ -104,6 +104,37 @@ func (h *Handler) isPanelUser(id int64) bool {
 	return h.panelURL != "" && h.isAdminFn != nil && h.isAdminFn(id)
 }
 
+// notifyAdmins tells every admin that a report came in, with a button that
+// opens the panel right inside Telegram. The submitter is skipped, and a failed
+// notice (e.g. an admin who never started the bot) must not fail the report.
+func (h *Handler) notifyAdmins(ctx context.Context, r domain.Report) {
+	if len(h.adminIDs) == 0 {
+		return
+	}
+	desc := strings.TrimSpace(r.Description)
+	if desc == "" {
+		desc = textNoDescription
+	}
+	text := fmt.Sprintf(textNewReportNotice, r.User.DisplayName(), r.Category, desc, r.ID)
+
+	var kb *telegram.InlineKeyboardMarkup
+	if strings.HasPrefix(h.panelURL, "https://") {
+		kb = telegram.Rows(telegram.WebAppButton(textAdminPanelButton, h.panelURL))
+	}
+	for _, id := range h.adminIDs {
+		if id == r.User.ID {
+			continue
+		}
+		params := map[string]any{"chat_id": id, "text": text}
+		if kb != nil {
+			params["reply_markup"] = kb
+		}
+		if err := h.api.SendNotification(ctx, params); err != nil {
+			log.Printf("new report %s: notify admin %d: %v", r.ID, id, err)
+		}
+	}
+}
+
 // NewReportRequest is the persistent bottom keyboard button that starts a report.
 const newReportRequest = "📝 ثبت گزارش باگ"
 

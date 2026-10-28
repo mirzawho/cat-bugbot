@@ -141,6 +141,7 @@ func main() {
 	defer stop()
 
 	handler := bot.New(api, st, cfg.IsAdmin)
+	handler.SetAdmins(cfg.Admins)
 	panelPublicURL := cfg.ServiceURL
 	if panelPublicURL == "" {
 		panelPublicURL = "http://localhost" + cfg.HealthAddr

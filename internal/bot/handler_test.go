@@ -17,8 +17,12 @@ func TestStartShowsWelcomeAndCancelButton(t *testing.T) {
 	if !strings.Contains(m.Text, "به ربات گزارش باگ کت خوش آمدی") {
 		t.Fatalf("unexpected welcome: %q", m.Text)
 	}
-	if m.KB == nil || m.KB.InlineKeyboard[0][0].CallbackData != "cancel" {
-		t.Fatalf("cancel button missing")
+	if m.KB == nil || len(m.KB.InlineKeyboard) != 2 {
+		t.Fatalf("buttons missing: %+v", m.KB)
+	}
+	cbs := []string{m.KB.InlineKeyboard[0][0].CallbackData, m.KB.InlineKeyboard[1][0].CallbackData}
+	if cbs[0] != "media:skip" || cbs[1] != "cancel" {
+		t.Fatalf("first step buttons = %v", cbs)
 	}
 }
 
@@ -29,8 +33,8 @@ func TestReportCommandStartsFlow(t *testing.T) {
 	if !strings.Contains(m.Text, "تصویر یا ویدئوی مربوط به باگ را ارسال کن") {
 		t.Fatalf("unexpected: %q", m.Text)
 	}
-	if m.KB == nil || m.KB.InlineKeyboard[0][0].CallbackData != "cancel" {
-		t.Fatal("cancel button missing")
+	if m.KB == nil || len(m.KB.InlineKeyboard) != 2 || m.KB.InlineKeyboard[1][0].CallbackData != "cancel" {
+		t.Fatalf("cancel button missing: %+v", m.KB)
 	}
 	e.photo("p1")
 	if !strings.HasPrefix(e.last().Text, "آیا از ارسال این تصویر یا ویدئو برای گزارش باگ مطمئن هستی؟") {
@@ -93,19 +97,51 @@ func TestVideoAccepted(t *testing.T) {
 	}
 }
 
-func TestInvalidMediaRejected(t *testing.T) {
+func TestTextWithoutMediaSkipsToCategory(t *testing.T) {
 	e := newEnv(t)
 	e.text("/start")
 	e.text("سلام، یک توضیح")
-	if !strings.Contains(e.last().Text, "مدیای معتبر") {
-		t.Fatalf("expected rejection: %q", e.last().Text)
+	if !strings.Contains(e.last().Text, "کدام بخش کت") {
+		t.Fatalf("text should move on to the category: %q", e.last().Text)
 	}
 	d, err := e.db.DraftFor(context.Background(), testUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.State != domain.StateAwaitingMedia || len(d.Media) != 0 {
-		t.Fatalf("draft changed: %+v", d)
+	if d.State != domain.StateSelectingCategory || len(d.Media) != 0 {
+		t.Fatalf("draft = %+v", d)
+	}
+}
+
+func TestSkipMediaButtonGoesToCategory(t *testing.T) {
+	e := newEnv(t)
+	e.text("/start")
+	e.callback("media:skip")
+	if !strings.Contains(e.last().Text, "کدام بخش کت") {
+		t.Fatalf("skip should ask for the category: %q", e.last().Text)
+	}
+	e.callback("cat:1")
+	e.callback("cat:yes")
+	e.callback("desc:skip")
+	if !strings.Contains(e.last().Text, "بدون تصویر") {
+		t.Fatalf("summary should say there is no media: %q", e.last().Text)
+	}
+	e.callback("submit:yes")
+	if e.reportCount() != 1 {
+		t.Fatalf("reports = %d", e.reportCount())
+	}
+	d, _ := e.db.DraftFor(context.Background(), testUserID)
+	if d.State != "" {
+		t.Fatalf("draft should be cleared, got %+v", d)
+	}
+}
+
+func TestSkipMediaIsOnlyValidAtFirstStep(t *testing.T) {
+	e := newEnv(t)
+	e.goToCategory()
+	e.callback("media:skip")
+	if !strings.Contains(e.last().Text, "این دکمه دیگر معتبر نیست") {
+		t.Fatalf("stale skip should be ignored: %q", e.last().Text)
 	}
 }
 
@@ -569,6 +605,66 @@ func TestPanelCommandOnlyForAdmins(t *testing.T) {
 	}
 	if got := m.KB.InlineKeyboard[0][0].WebApp.URL; got != "https://cr0.ir/admin/" {
 		t.Fatalf("mini app url = %q", got)
+	}
+}
+
+func TestNewReportNotifiesEveryAdminWithPanelButton(t *testing.T) {
+	e := newEnv(t)
+	const adminID, otherAdmin = int64(555), int64(777)
+	e.h.SetAdmins([]int64{adminID, otherAdmin, testUserID})
+	e.h.SetPanelURL("https://cr0.ir")
+
+	e.text("/start")
+	e.photo("photo-1")
+	e.callback("media:yes")
+	e.callback("cat:1")
+	e.callback("cat:yes")
+	e.text("دکمه پرداخت کار نمی‌کند")
+	e.callback("submit:yes")
+
+	if e.reportCount() != 1 {
+		t.Fatalf("reports = %d", e.reportCount())
+	}
+	// Two admins, not the reporter who happens to be an admin too.
+	if len(e.api.notifications) != 2 {
+		t.Fatalf("notices = %d, want 2", len(e.api.notifications))
+	}
+	seen := map[int64]bool{}
+	for _, n := range e.api.notifications {
+		chatID, _ := n["chat_id"].(int64)
+		seen[chatID] = true
+		text, _ := n["text"].(string)
+		if !strings.Contains(text, "گزارش جدید") || !strings.Contains(text, "گروه‌ها") || !strings.Contains(text, "دکمه پرداخت کار نمی‌کند") {
+			t.Fatalf("notice for %d = %q", chatID, text)
+		}
+		if !strings.Contains(text, "علی") {
+			t.Fatalf("notice should name the reporter: %q", text)
+		}
+		kb, ok := n["reply_markup"].(*telegram.InlineKeyboardMarkup)
+		if !ok || len(kb.InlineKeyboard[0]) != 1 || kb.InlineKeyboard[0][0].WebApp == nil {
+			t.Fatalf("notice should carry a Mini App button, got %+v", n["reply_markup"])
+		}
+		if got := kb.InlineKeyboard[0][0].WebApp.URL; got != "https://cr0.ir/admin/" {
+			t.Fatalf("mini app url = %q", got)
+		}
+	}
+	if !seen[adminID] || !seen[otherAdmin] || seen[testUserID] {
+		t.Fatalf("notice recipients = %v", seen)
+	}
+}
+
+func TestNewReportNoticeNeedsNoPanelForAdmins(t *testing.T) {
+	e := newEnv(t)
+	e.h.SetAdmins(nil)
+	e.text("/start")
+	e.photo("photo-1")
+	e.callback("media:yes")
+	e.callback("cat:1")
+	e.callback("cat:yes")
+	e.callback("desc:skip")
+	e.callback("submit:yes")
+	if len(e.api.notifications) != 0 {
+		t.Fatalf("no admins configured should send nothing, got %d", len(e.api.notifications))
 	}
 }
 
