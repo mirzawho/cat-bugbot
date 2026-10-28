@@ -72,113 +72,19 @@ kubectl -n bugbot rollout status deployment/bugbot
 
 ## CI/CD
 
-Workflow: [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
+Workflow: [.github/workflows/build.yml](.github/workflows/build.yml)
 
-1. **test:** `gofmt`، `go vet`، `go test -race`، `go build`
-2. **build-and-push:** Image روی GHCR با Tagهای `sha-<full>`، `<short-sha>` و `latest` → `ghcr.io/<owner>/<repo>`
-3. **check-deploy-config:** بررسی وجود Secret
-4. **deploy:** فقط اگر Secret `KUBE_CONFIG` تنظیم شده باشد اجرا می‌شود؛ Image جدید در Manifest جایگزین و `kubectl apply` + `rollout status` انجام می‌شود. اگر Secret نباشد، فقط Build و Publish انجام می‌شود و Workflow شکست نمی‌خورد.
+1. **test:** `go mod verify` و `go list -m all` (با `-mod=readonly`)، `gofmt`، `go vet`، `go test -race`، `go build`
+2. **build-and-push:** ساخت Image به `ghcr.io/mirzawho/cat-bugbot` با Tagهای `sha-<full>`، `<short-sha>` و `latest`
 
-Secretهای GitHub Actions:
-
-| Secret | کاربرد |
-|---|---|
-| `KUBE_CONFIG` | kubeconfig با دسترسی Namespace `bugbot`، Base64 |
-| `GITHUB_TOKEN` | خودکار؛ برای Push به GHCR |
-
-```bash
-kubectl config view --minify --raw | base64
-```
-
-خروجی را در Settings → Secrets and variables → Actions با نام `KUBE_CONFIG` ثبت کنید.
-
-### آدرس API تلگرام (`TELEGRAM_API_BASE`)
-
-ربات فقط با یک **سرور Bot API** حرف می‌زند: درخواست‌ها به `<base>/bot<TOKEN>/getUpdates` و فایل‌ها از `<base>/file/bot<TOKEN>/...` خوانده می‌شوند. اگر می‌خواهید از دامنه خودتان عبور کنید، باید آن دامنه واقعاً یک پروکسی/آینه همین API باشد:
-
-```bash
-# nginx روی cr0.ir: /bot... و /file/bot... → api.telegram.org
-location ~ ^/(bot|file/bot) { proxy_pass https://api.telegram.org; }
-```
-
-اگر `cr0.ir` را فقط برای پنل مدیریت تنظیم کرده‌اید، `TELEGRAM_API_BASE` را خالی بگذارید تا مستقیم به `https://api.telegram.org` وصل شود. آدرس لاگ‌شده در خط اول اجرا (`telegram api: ...`) نشان می‌دهد ربات واقعاً به کجا می‌رود.
-
-### آرشیو مدیا و `REPORT_CHAT_ID`
-
-تلگرام `file_id` هر فایل را فقط برای همان رباتی می‌پذیرد که آن را دریافت کرده است؛ بنابراین اگر توکن عوض شود یا دیتابیس قدیمی باشد، `getFile` با `FILE_ID_INVALID` شکست می‌خورد. برای اینکه این مشکل دیگر پیش نیاید:
-
-1. یک گروه/کانال خصوصی بسازید و ربات را ادمین کنید.
-2. شناسه‌اش را (مثلاً `-1001234567890`) در `REPORT_CHAT_ID` بگذارید و ربات را دوباره اجرا کنید.
-
-از این پس هر مدیای گزارش در همان لحظه به این گروه آرشیو می‌شود و `file_id` تازه (متعلق به ربات فعلی) ذخیره می‌شود؛ پنل هم همان را می‌خواند. اگر این متغیر خالی باشد، همان `file_id` ورودی ذخیره می‌شود.
-
-## پنل داخل تلگرام (Mini App)
-
-پنل یک [Telegram Mini App](https://core.telegram.org/bots/webapps) است و داخل خود تلگرام باز می‌شود (بدون مرورگر). راه‌اندازی، یک‌بار:
-
-1. دامنه در `.env`: `SERVICE_URL=https://cr0.ir` (همان دامنه‌ای که پنل روی آن سرو می‌شود؛ باید **HTTPS** باشد).
-2. در `@BotFather` → `/newapp` یک Mini App بسازید و آدرس `https://cr0.ir/admin/` را بدهید.
-3. پنل را روی همان دامنه سرو کنید (در کلاستر با Ingress موجود در `k8s.yaml`، یا معادل آن در سطح سرور).
-4. ربات را اجرا کنید. مدیرِ داخل `ADMINS` با `/start` یک کیبورد ثابت پایین صفحه می‌گیرد که دکمه «📊 پنل مدیریت» روی آن است؛ همان دکمه پنل را داخل تلگرام باز می‌کند. «📝 ثبت گزارش باگ» هم جریان گزارش را شروع می‌کند.
-
-**امنیت:** داخل Mini App صفحه `Telegram.WebApp.initData` را به `POST /admin/miniapp/session` می‌فرستد؛ سرور امضا را با توکن ربات (HMAC‑SHA256 با کلید `WebAppData`) بررسی می‌کند، عمر `auth_date` را حداکثر ۲۴ ساعت می‌پذیرد و فقط اگر `user.id` در `ADMINS` باشد سشن را صادر می‌کند. کاربر غیرمدیر چه دکمه داشته باشد چه مستقیم لینک را باز کند، پاسخ ۴۰۳ می‌گیرد. ورود با رمز در مرورگر هم باقی می‌ماند.
-
-اگر `SERVICE_URL` با `https://` شروع نشود، تلگرام Mini App را باز نمی‌کند؛ در این حالت `/panel` دلیلش را می‌گوید.
-
-## پنل مدیریت
-
-پنل روی `http://<host>:8080/admin/` (یا `https://cr0.ir/admin/` در کلاستر) سرو می‌شود و فقط مدیران وارد می‌شوند:
-
-| متغیر | توضیح |
-|---|---|
-| `ADMINS` | شناسه‌های عددی تلگرام مدیران، با کاما: `12345,67890` |
-| `ADMIN_PANEL_PASSWORD` | رمز ورود پنل؛ اگر `ADMINS` تنظیم شود الزامی است |
-| `SERVICE_URL` | آدرس عمومی سرویس (برای Secure Cookie پشت HTTPS)، مثلاً `https://cr0.ir` |
-| `ADMIN_PANEL_IP_ALLOWLIST_ENFORCED` و `ADMIN_PANEL_ALLOWED_IPS` | اختیاری؛ محدودکردن پنل به IPهای مشخص (مثلاً هنگام باز کردن داخل Mini App تلگرام که کوکی سشن را نگه نمی‌دارد) |
-
-قابلیت‌ها: تب‌های «همه / حل شده‌ها / حذف شده‌ها»، کارت هر گزارش شامل مدیا (از طریق خود سرور از Bot API پروکسی می‌شود؛ توکن به مرورگر نمی‌رود)، `#دسته‌بندی`، نام و شناسه گزارش‌دهنده، متن توضیحات و دکمه‌های:
-
-- **بررسی گزارش** → وضعیت «در حال بررسی» (از این وضعیت، «تایید گزارش» نمایش داده می‌شود)
-- **تایید گزارش** → وضعیت «حل شده» و ارسال پیام تأیید به کاربر
-- **حذف گزارش** → وضعیت «حذف شده» و اطلاع به کاربر؛ در هر مرحله قبل از بسته شدن گزارش در دسترس است و پس از آن، گزارش نهایی و غیرقابل تغییر است
-- **چت با گزارش‌دهنده** → پس از اولین پیام مدیر، ربات به کاربر اطلاع می‌دهد و پیام‌های بعدی کاربر مستقیم به همین گفت‌وگو می‌رود (`/cancel` پایان می‌دهد)
-
-### هویت گزارش‌دهنده در گزارش
-
-نام، نام خانوادگی و `username` هنگام ثبت گزارش از پیام خودِ کاربر ذخیره می‌شوند (در یک تراکنش با خود گزارش). پنل هم برای نمایش نام/آواتار به‌روز، از تلگرام (`getChat` و `getUserProfilePhotos`) می‌خواند و نتیجه را ۱۰ دقیقه کش می‌کند.
-
-### دسترسی به API پنل
-
-درخواست‌های API از یکی از این سه راه معتبر می‌شوند:
-
-1. کوکی سشن امضاشده (ورود با رمز در مرورگر).
-2. هدر `x-cat-user-id` همراه با `x-cat-init-data` (همان `Telegram.WebApp.initData`): امضای تلگرام با توکن ربات بررسی می‌شود و فقط باید با همان ID مطابقت داشته باشد.
-3. هدر `x-cat-user-id` از مسیر edge خودِ استقرار، وقتی `ADMIN_PANEL_IP_ALLOWLIST_ENFORCED=true` است و IP در `ADMIN_PANEL_ALLOWED_IPS` باشد. **در این حالت edge باید هدرهای `X-Cat-User-Id`/`X-Cat-Init-Data` را از کلاینت حذف کند**؛ در غیر این صورت هر کسی می‌تواند خود را مدیر جا بزند.
-
-هر سه مسیر بعد از احراز هویت، ID را با `ADMINS` چک می‌کنند. هدرِ تنها (بدون init data و بدون edge مورد اعتماد) همیشه ۴۰۱ می‌گیرد.
-
-API پنل (`/admin/api/...`) پشت سشن امضاشده (HMAC) است؛ بدون ورود، پاسخ `401` می‌گیرد:
-
-```
-GET  /admin/api/reports[?status=new|resolved|rejected]
-POST /admin/api/reports/{id}/status       {"status":"review|resolved|rejected"}
-        # new→review، new→rejected، review→resolved، review→rejected؛ بعد از انتها 409
-GET  /admin/api/reports/{id}/messages
-POST /admin/api/reports/{id}/messages     {"text":"..."}
-GET  /admin/api/reports/{id}/media/{n}    (پروکسی فایل تلگرام)
-```
-
-ساخت Secret در کلاستر:
-
-```bash
-kubectl -n bugbot create secret generic bugbot-secret --from-literal=BOT_TOKEN='<توکن>' --from-literal=ADMIN_PANEL_PASSWORD='<رمز>' --from-literal=ADMINS='<شناسه‌ها>'
-```
+استقرار روی Kubernetes در Workflow انجام نمی‌شود؛ Image منتشر می‌شود و دیپلوی دستی با `make k8s-apply` یا `kubectl apply -f k8s.yaml` است (بعد از تغییر Image در Manifest).
+Secret `KUBE_CONFIG` دیگر لازم نیست.
 
 ## Make
 
 ```bash
 make help          # فهرست دستورها
-make check         # همان مراحل job تست CI (tidy، fmt، vet، test)
+make check         # بررسی فرمت، vet و تست (مثل CI)
 make test          # تست‌ها
 make build         # باینری در bin/bugbot
 make run           # اجرای محلی
@@ -194,7 +100,60 @@ go test ./...
 go vet ./...
 ```
 
-تست‌ها با Fake API و SQLite موقت اجرا می‌شوند و Telegram واقعی لازم نیست. پوشش شامل: تصویر و ویدئو، رد مدیای نامعتبر، تأیید/رد مدیا، انتخاب/تأیید/رد دسته‌بندی، توضیحات یا رد آن، ثبت نهایی، لغو در همه مراحل، ادامه پس از Restart، جلوگیری از ثبت تکراری، و Callbackهای قدیمی/نامعتبر.
+تست‌ها با Fake API و SQLite موقت اجرا می‌شوند و Telegram واقعی لازم نیست. پوشش شامل: تصویر و ویدئو، رد مدیای نامعتبر، تأیید/رد مدیا، انتخاب/تأیید/رد دسته‌بندی، توضیحات یا رد آن، ثبت نهایی، لغو در همه مراحل، ادامه پس از Restart، جلوگیری از ثبت تکراری، Callbackهای قدیمی/نامعتبر، جریان وضعیت گزارش‌ها در پنل، چت با گزارش‌دهنده و احراز هویت Mini App.
+
+## پنل مدیریت
+
+پنل روی `http://<host>:8080/admin/` (یا `https://cr0.ir/admin/` در کلاستر) سرو می‌شود و فقط مدیران وارد می‌شوند:
+
+| متغیر | توضیح |
+|---|---|
+| `ADMINS` | شناسه‌های عددی تلگرام مدیران، با کاما: `12345,67890` |
+| `ADMIN_PANEL_PASSWORD` | رمز ورود پنل؛ اگر `ADMINS` تنظیم شود الزامی است |
+| `SERVICE_URL` | آدرس عمومی سرویس (برای Secure Cookie پشت HTTPS)، مثلاً `https://cr0.ir` |
+| `ADMIN_PANEL_IP_ALLOWLIST_ENFORCED` و `ADMIN_PANEL_ALLOWED_IPS` | اختیاری؛ محدودکردن پنل به IPهای مشخص |
+
+تب‌ها: همه (با شمارنده هر وضعیت شامل «در حال بررسی»)، حل شده‌ها و حذف شده‌ها. هر کارت مدیا (پروکسی‌شده از Bot API، بدون افشای توکن)، `#دسته‌بندی`، نام و شناسه گزارش‌دهنده و توضیحات را نشان می‌دهد. دکمه‌ها تمام‌عرض‌اند:
+
+- **گزارش جدید:** بررسی گزارش · حذف گزارش · چت با گزارش‌دهنده
+- **در حال بررسی:** تایید گزارش (حل شد) · حذف گزارش · چت با گزارش‌دهنده
+- **حل شده / حذف شده:** بدون دکمه؛ گزارش نهایی است و چت بسته می‌شود
+
+چت در یک bottom sheet باز می‌شود و پیام‌ها از سرور به تلگرام کاربر می‌رسند.
+
+### هویت گزارش‌دهنده
+
+نام، نام خانوادگی و `username` هنگام ثبت گزارش از پیام خودِ کاربر و در همان تراکنش ذخیره می‌شوند. پنل هم برای نام/آواتار به‌روز از `getChat` و `getUserProfilePhotos` می‌خواند (کش ۱۰ دقیقه‌ای).
+
+### دسترسی به API پنل
+
+1. کوکی سشن امضاشده (ورود با رمز در مرورگر).
+2. هدر `x-cat-user-id` همراه با `x-cat-init-data` (امضای تلگرام با توکن ربات باید با همان ID بخواند).
+3. هدر `x-cat-user-id` از edge خودتان، فقط با `ADMIN_PANEL_IP_ALLOWLIST_ENFORCED=true` و IP مجاز. در این حالت edge باید این هدرها را از کلاینت حذف کند.
+
+هر سه مسیر ID را با `ADMINS` چک می‌کنند؛ هدرِ تنها همیشه ۴۰۱ می‌گیرد.
+
+```
+GET  /admin/api/reports[?status=new|review|resolved|rejected]
+POST /admin/api/reports/{id}/status       {"status":"review|resolved|rejected"}
+GET  /admin/api/reports/{id}/messages
+POST /admin/api/reports/{id}/messages     {"text":"..."}   (فقط در حال بررسی)
+GET  /admin/api/reports/{id}/media/{n}    (پروکسی فایل تلگرام)
+```
+
+## پنل داخل تلگرام (Mini App)
+
+1. دامنه در `.env`: `SERVICE_URL=https://cr0.ir` (HTTPS لازم است).
+2. در `@BotFather` → `/newapp` آدرس `https://cr0.ir/admin/` را ثبت کنید.
+3. مدیرِ داخل `ADMINS` با `/start` کیبورد ثابت با دکمه «📊 پنل مدیریت» می‌گیرد که Mini App را داخل تلگرام باز می‌کند.
+
+ورود از داخل Mini App با `Telegram.WebApp.initData` انجام می‌شود (امضا با توکن ربات، `auth_date` حداکثر ۲۴ ساعت و عضویت در `ADMINS`).
+
+## API تلگرام و آرشیو مدیا
+
+`TELEGRAM_API_BASE` باید ریشه یک سرور Bot API باشد؛ ربات به `<base>/bot<TOKEN>/getUpdates` و `<base>/file/bot<TOKEN>/...` درخواست می‌زند. اگر از دامنه خودتان عبور می‌دهید، آن دامنه باید همین مسیرها را به `api.telegram.org` پروکسی کند.
+
+`REPORT_CHAT_ID` (اختیاری اما توصیه‌شده): شناسه یک گروه خصوصی که ربات در آن ادمین است. مدیای هر گزارش همان‌جا آرشیو می‌شود و `file_id` تازه ذخیره می‌شود؛ این کار خطای `FILE_ID_INVALID` را وقتی توکن عوض می‌شود از بین می‌برد.
 
 ## ساختار
 
